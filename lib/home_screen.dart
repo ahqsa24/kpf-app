@@ -82,10 +82,8 @@ class _HomeScreenState extends State<HomeScreen> {
           backgroundColor: const Color(
             0xFF00A63E,
           ), // androidTabBarBackgroundColor
-          selectedItemColor: Colors.white, // androidTabBarIndicatorColor
-          unselectedItemColor: const Color(
-            0xFFE9ECEF,
-          ), // androidTabBarTextColor
+          selectedItemColor: Colors.white,
+          unselectedItemColor: Colors.white38, // androidTabBarTextColor
           showUnselectedLabels: true,
           items: _tabs.map((tab) {
             return BottomNavigationBarItem(
