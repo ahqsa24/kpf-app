@@ -22,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   AppLanguage _currentLanguage = AppLanguage.id;
   bool _isUpdating = false;
+  bool _isWebViewLoaded = false;
 
   static const String baseUrl = 'https://kpf-dev.kp-futures.com';
 
@@ -75,12 +76,20 @@ class _HomeScreenState extends State<HomeScreen> {
         initialUrl: baseUrl,
         onUrlChanged: _syncTabAndLanguageFromUrl,
         onLanguageChanged: _handleLanguageChangeFromWebView,
+        onPageLoaded: _handlePageLoaded,
       );
       _controller = _webViewManager.controller;
       
       // Check for Shorebird patch updates
       _checkForUpdates();
     }
+
+  void _handlePageLoaded() {
+    setState(() {
+      _isWebViewLoaded = true;
+    });
+    debugPrint('WebView page loaded');
+  }
 
   Future<void> _checkForUpdates() async {
     try {
@@ -95,14 +104,22 @@ class _HomeScreenState extends State<HomeScreen> {
         final nextPatch = await updater.readNextPatch();
         final availableVersion = nextPatch?.number.toString() ?? 'unknown';
         
+        debugPrint('Available patch: $availableVersion, Status: $status');
+        
         // Check if user already skipped this update
         final prefs = await SharedPreferences.getInstance();
         final skippedVersion = prefs.getString('skipped_update_version');
         
+        debugPrint('Skipped version: $skippedVersion');
+        
         // Only show dialog if this is a new update (different version)
         if (skippedVersion != availableVersion) {
           _showUpdateDialog();
+        } else {
+          debugPrint('Update already skipped or installed for version: $availableVersion');
         }
+      } else {
+        debugPrint('No updates available. Status: $status');
       }
     } catch (e) {
       debugPrint('Error checking for updates: $e');
@@ -171,11 +188,21 @@ class _HomeScreenState extends State<HomeScreen> {
                           setDialogState(() {
                             _isUpdating = true;
                           });
-                          await _installUpdate();
-                          // App will restart after update, so we don't pop here
-                          if (mounted && !_isUpdating) {
+                          
+                          // Close dialog and show loading overlay
+                          if (mounted) {
                             Navigator.of(context).pop();
                           }
+                          
+                          // Show loading overlay while installing
+                          _showLoadingOverlay(
+                            _currentLanguage == AppLanguage.id
+                                ? 'Mengunduh dan memasang pembaruan...\nJangan tutup aplikasi.'
+                                : 'Downloading and installing update...\nDo not close the app.',
+                          );
+                          
+                          await _installUpdate();
+                          // App will restart after update, so we don't pop here
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF00A63E),
@@ -210,8 +237,45 @@ class _HomeScreenState extends State<HomeScreen> {
       // If update is successful, the app will restart automatically
       debugPrint('Update completed, app will restart');
     } catch (e) {
+      final errorMessage = e.toString();
       debugPrint('Error installing update: $e');
       debugPrint('Stack trace: ${StackTrace.current}');
+      
+      // Handle "No update" error - patch sudah scheduled untuk install
+      if (errorMessage.contains('noUpdate') || errorMessage.contains('No update')) {
+        debugPrint('Patch akan diinstall saat restart aplikasi...');
+        if (mounted) {
+          Navigator.of(context).pop();
+          
+          // Show success notification - user dapat continue menggunakan app
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _currentLanguage == AppLanguage.id
+                    ? 'Pembaruan berhasil diunduh, silahkan restart aplikasi untuk menerapkan'
+                    : 'Update downloaded successfully, please restart the app to apply',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              backgroundColor: const Color(0xFF00A63E),
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.all(16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          );
+          
+          setState(() {
+            _isUpdating = false;
+          });
+        }
+        return;
+      }
+      
       setState(() {
         _isUpdating = false;
       });
@@ -223,12 +287,54 @@ class _HomeScreenState extends State<HomeScreen> {
               _currentLanguage == AppLanguage.id
                   ? 'Gagal menginstal pembaruan: ${e.toString()}'
                   : 'Failed to install update: ${e.toString()}',
+              style: const TextStyle(
+                color: Colors.white,
+              ),
             ),
+            backgroundColor: const Color(0xFFC62828),
             duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         );
       }
     }
+  }
+
+  void _showLoadingOverlay(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return WillPopScope(
+          onWillPop: () async => false,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Color(0xFF00A63E),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _handleLanguageChangeFromWebView(String language) {
@@ -283,6 +389,7 @@ class _HomeScreenState extends State<HomeScreen> {
    void _onTabTapped(int index) {
     setState(() {
       _currentIndex = index;
+      _isWebViewLoaded = false; // Reset loading state
     });
 
     final path = _tabs[index]['path'];
@@ -315,8 +422,35 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
         body: SafeArea(
-          child: WebViewWidget(
-            controller: _webViewManager.controller,
+          child: Stack(
+            children: [
+              WebViewWidget(
+                controller: _webViewManager.controller,
+              ),
+              // Show loading overlay if WebView not yet loaded or updating
+              if (!_isWebViewLoaded || _isUpdating)
+                Container(
+                  color: Colors.white,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Color(0xFF00A63E),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _currentLanguage == AppLanguage.id
+                              ? 'Memuat aplikasi...'
+                              : 'Loading app...',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
         bottomNavigationBar: BottomNavigationBar(
@@ -325,7 +459,7 @@ class _HomeScreenState extends State<HomeScreen> {
           type: BottomNavigationBarType.fixed,
           backgroundColor: const Color(
             0xFF00A63E,
-          ), // androidTabBarBackgroundColor
+          ),
           selectedItemColor: Colors.white,
           unselectedItemColor: Colors.white38, // androidTabBarTextColor
           showUnselectedLabels: true,

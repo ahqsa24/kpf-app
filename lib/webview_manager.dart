@@ -6,11 +6,13 @@ class WebViewManager {
   late final WebViewController controller;
   final Function(String) onUrlChanged;
   final Function(String)? onLanguageChanged;
+  final Function()? onPageLoaded;
 
   WebViewManager({
     required String initialUrl,
     required this.onUrlChanged,
     this.onLanguageChanged,
+    this.onPageLoaded,
   }) {
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -32,6 +34,8 @@ class WebViewManager {
           onPageFinished: (String url) {
             onUrlChanged(url);
             _injectLanguageListener();
+            // Notify that page is fully loaded
+            onPageLoaded?.call();
           },
 
           onWebResourceError: (WebResourceError error) {},
